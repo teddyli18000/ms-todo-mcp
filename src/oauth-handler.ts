@@ -14,9 +14,15 @@ app.get("/authorize", async (c) => {
   try {
     const authRequest = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
     if (!authRequest.clientId) return c.text("Invalid OAuth client.", 400);
-    const { state, setCookie } = await createOAuthState(authRequest, c.env.MICROSOFT_OAUTH_STATE);
+    const { state, setCookie, oidcNonce, codeChallenge } = await createOAuthState(authRequest, c.env.MICROSOFT_OAUTH_STATE);
     const redirectUri = new URL("/oauth/microsoft/callback", c.req.url).toString();
-    const authorizeUrl = buildMicrosoftAuthorizeUrl({ clientId: c.env.MICROSOFT_CLIENT_ID, redirectUri, state });
+    const authorizeUrl = buildMicrosoftAuthorizeUrl({
+      clientId: c.env.MICROSOFT_CLIENT_ID,
+      redirectUri,
+      state,
+      oidcNonce,
+      codeChallenge,
+    });
     return new Response(null, { status: 302, headers: { Location: authorizeUrl, "Set-Cookie": setCookie, "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("Microsoft OAuth authorization start failed", safeError(error));
@@ -26,9 +32,9 @@ app.get("/authorize", async (c) => {
 
 app.get("/oauth/microsoft/callback", async (c) => {
   const upstreamError = c.req.query("error");
-  if (upstreamError) return c.text(`Microsoft authorization was not completed: ${upstreamError}`, 400);
+  if (upstreamError) return c.text(`Microsoft authorization was not completed: ${safeQueryText(upstreamError)}`, 400);
   try {
-    const { authRequest, clearCookie } = await consumeOAuthState(c.req.raw, c.env.MICROSOFT_OAUTH_STATE);
+    const { authRequest, clearCookie, oidcNonce, codeVerifier } = await consumeOAuthState(c.req.raw, c.env.MICROSOFT_OAUTH_STATE);
     if (!authRequest.clientId) return c.text("Invalid OAuth request.", 400);
     const code = c.req.query("code");
     if (!code) return c.text("Microsoft did not return an authorization code.", 400);
@@ -38,6 +44,8 @@ app.get("/oauth/microsoft/callback", async (c) => {
       clientSecret: c.env.MICROSOFT_CLIENT_SECRET,
       code,
       redirectUri,
+      codeVerifier,
+      expectedNonce: oidcNonce,
     });
     const vault = c.env.MICROSOFT_TOKEN_VAULT.get(c.env.MICROSOFT_TOKEN_VAULT.idFromName(identity.userId));
     const stored = await vault.fetch("https://token-vault/initialize", {
@@ -61,9 +69,13 @@ app.get("/oauth/microsoft/callback", async (c) => {
   }
 });
 
+function safeQueryText(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 120);
+}
+
 function safeError(error: unknown): string {
   return (error instanceof Error ? error.message : "Unknown error")
-    .replace(/(?:access_token|refresh_token|client_secret)\s*[=:]\s*[^\s,;]+/gi, "$1=[REDACTED]")
+    .replace(/(?:access_token|refresh_token|client_secret|code_verifier)\s*[=:]\s*[^\s,;]+/gi, "$1=[REDACTED]")
     .slice(0, 800);
 }
 
