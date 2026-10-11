@@ -46,11 +46,11 @@ export function encodeGraphCursor(nextLink: string | undefined): string | undefi
   return base64UrlEncode(new TextEncoder().encode(url));
 }
 
-export function decodeGraphCursor(cursor: string, expectedPathPrefix: string): string {
+export function decodeGraphCursor(cursor: string, expectedPath: string): string {
   let value: string;
   try { value = new TextDecoder().decode(base64UrlDecode(cursor)); } catch { throw new Error("Invalid pagination cursor."); }
   const url = new URL(normalizeGraphUrl(value));
-  if (!url.pathname.startsWith(`/v1.0${expectedPathPrefix}`)) throw new Error("Pagination cursor does not belong to this resource.");
+  if (url.pathname !== `/v1.0${expectedPath}`) throw new Error("Pagination cursor does not belong to this resource.");
   return url.toString();
 }
 
