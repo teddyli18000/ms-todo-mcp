@@ -13,4 +13,9 @@ describe("Graph pagination cursor", () => {
     const cursor = encodeGraphCursor("https://graph.microsoft.com/v1.0/me/messages?$skiptoken=x")!;
     expect(() => decodeGraphCursor(cursor, "/me/todo/lists/list1/tasks")).toThrow();
   });
+
+  it("rejects a same-prefix cursor for a child resource", () => {
+    const cursor = encodeGraphCursor("https://graph.microsoft.com/v1.0/me/todo/lists/list1/tasks/other?$skiptoken=x")!;
+    expect(() => decodeGraphCursor(cursor, "/me/todo/lists/list1/tasks")).toThrow();
+  });
 });
