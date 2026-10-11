@@ -4,10 +4,11 @@ import type { ConnectorProps, GraphTodoTask, GraphTodoTaskList, ToolOperation, T
 const MAX_LISTS_FOR_CROSS_LIST_SCAN = 50;
 
 type ListResponse<T> = { value: T[]; "@odata.nextLink"?: string };
+type ParsedInput = Record<string, any>;
 
 export async function executeTodoOperation(env: Env, props: ConnectorProps, operation: ToolOperation): Promise<ToolResult> {
   const accessToken = await getAccessToken(env, props.userId);
-  const input = operation.input as Record<string, any>;
+  const input = operation.input as ParsedInput;
   switch (operation.name) {
     case "get_todo_capabilities":
       return result({
@@ -92,14 +93,14 @@ async function getAccessToken(env: Env, userId: string): Promise<string> {
   return payload.accessToken;
 }
 
-async function listTaskLists(accessToken: string, input: { limit: number; cursor?: string }): Promise<unknown> {
+async function listTaskLists(accessToken: string, input: ParsedInput): Promise<unknown> {
   const expected = "/me/todo/lists";
   const url = input.cursor ? decodeGraphCursor(input.cursor, expected) : `${expected}?$top=${input.limit}`;
   const payload = await graphJson<ListResponse<GraphTodoTaskList>>(accessToken, url);
   return { lists: payload.value, next_cursor: encodeGraphCursor(payload["@odata.nextLink"]) };
 }
 
-async function listTasks(accessToken: string, input: { list_id: string; limit: number; cursor?: string; include_completed: boolean; status?: string }): Promise<unknown> {
+async function listTasks(accessToken: string, input: ParsedInput): Promise<unknown> {
   const expected = `/me/todo/lists/${segment(input.list_id)}/tasks`;
   const url = input.cursor ? decodeGraphCursor(input.cursor, expected) : `${expected}?$top=${input.limit}`;
   const payload = await graphJson<ListResponse<GraphTodoTask>>(accessToken, url);
@@ -107,9 +108,9 @@ async function listTasks(accessToken: string, input: { list_id: string; limit: n
   return { tasks, next_cursor: encodeGraphCursor(payload["@odata.nextLink"]) };
 }
 
-async function searchTasks(accessToken: string, input: { query: string; include_completed: boolean; max_results: number }): Promise<unknown> {
+async function searchTasks(accessToken: string, input: ParsedInput): Promise<unknown> {
   const lists = await collectTaskLists(accessToken);
-  const needle = input.query.toLocaleLowerCase();
+  const needle = String(input.query).toLocaleLowerCase();
   const matches: Array<{ list: GraphTodoTaskList; task: GraphTodoTask }> = [];
   for (const list of lists.slice(0, MAX_LISTS_FOR_CROSS_LIST_SCAN)) {
     const tasks = await collectTasks(accessToken, list.id, 200);
@@ -123,7 +124,7 @@ async function searchTasks(accessToken: string, input: { query: string; include_
   return { matches, truncated: false };
 }
 
-async function summarizeTasks(accessToken: string, input: { today?: string; days_ahead: number; include_completed: boolean; max_tasks_per_list: number }): Promise<unknown> {
+async function summarizeTasks(accessToken: string, input: ParsedInput): Promise<unknown> {
   const today = input.today ?? new Date().toISOString().slice(0, 10);
   const upcomingEnd = addDays(today, input.days_ahead);
   const lists = await collectTaskLists(accessToken);
@@ -147,7 +148,7 @@ async function collectTaskLists(accessToken: string): Promise<GraphTodoTaskList[
   const output: GraphTodoTaskList[] = [];
   let url: string | undefined = "/me/todo/lists?$top=100";
   for (let page = 0; url && page < 5; page += 1) {
-    const payload = await graphJson<ListResponse<GraphTodoTaskList>>(accessToken, url);
+    const payload: ListResponse<GraphTodoTaskList> = await graphJson<ListResponse<GraphTodoTaskList>>(accessToken, url);
     output.push(...payload.value);
     url = payload["@odata.nextLink"];
   }
@@ -158,14 +159,14 @@ async function collectTasks(accessToken: string, listId: string, maxTasks: numbe
   const output: GraphTodoTask[] = [];
   let url: string | undefined = `/me/todo/lists/${segment(listId)}/tasks?$top=${Math.min(100, maxTasks)}`;
   for (let page = 0; url && page < 5 && output.length < maxTasks; page += 1) {
-    const payload = await graphJson<ListResponse<GraphTodoTask>>(accessToken, url);
+    const payload: ListResponse<GraphTodoTask> = await graphJson<ListResponse<GraphTodoTask>>(accessToken, url);
     output.push(...payload.value);
     url = payload["@odata.nextLink"];
   }
   return output.slice(0, maxTasks);
 }
 
-function toGraphTaskPatch(input: Record<string, any>, creating: boolean): Record<string, unknown> {
+function toGraphTaskPatch(input: ParsedInput, creating: boolean): Record<string, unknown> {
   const body = removeUndefined({
     title: input.title,
     body: input.body === undefined ? undefined : { content: input.body, contentType: "text" },
@@ -183,17 +184,17 @@ function toGraphTaskPatch(input: Record<string, any>, creating: boolean): Record
   return body;
 }
 
-async function batchCreateTasks(accessToken: string, input: { list_id: string; tasks: Array<Record<string, unknown>> }): Promise<unknown> {
+async function batchCreateTasks(accessToken: string, input: ParsedInput): Promise<unknown> {
   const listId = segment(input.list_id);
-  const responses = await graphBatch(accessToken, input.tasks.map((task, index) => ({
+  const responses = await graphBatch(accessToken, input.tasks.map((task: ParsedInput, index: number) => ({
     id: String(index + 1), method: "POST", url: `/me/todo/lists/${listId}/tasks`, headers: { "Content-Type": "application/json" }, body: toGraphTaskPatch(task, true),
   })));
   return normalizeBatchResponses(responses);
 }
 
-async function batchUpdateTasks(accessToken: string, input: { list_id: string; tasks: Array<Record<string, any>> }): Promise<unknown> {
+async function batchUpdateTasks(accessToken: string, input: ParsedInput): Promise<unknown> {
   const listId = segment(input.list_id);
-  const responses = await graphBatch(accessToken, input.tasks.map((task, index) => ({
+  const responses = await graphBatch(accessToken, input.tasks.map((task: ParsedInput, index: number) => ({
     id: String(index + 1), method: "PATCH", url: `/me/todo/lists/${listId}/tasks/${segment(task.task_id)}`,
     headers: removeUndefined({ "Content-Type": "application/json", "If-Match": task.expected_etag }),
     body: toGraphTaskPatch(task, false),
@@ -201,9 +202,9 @@ async function batchUpdateTasks(accessToken: string, input: { list_id: string; t
   return normalizeBatchResponses(responses);
 }
 
-async function batchCompleteTasks(accessToken: string, input: { list_id: string; task_ids: string[] }): Promise<unknown> {
+async function batchCompleteTasks(accessToken: string, input: ParsedInput): Promise<unknown> {
   const listId = segment(input.list_id);
-  const responses = await graphBatch(accessToken, input.task_ids.map((taskId, index) => ({
+  const responses = await graphBatch(accessToken, input.task_ids.map((taskId: string, index: number) => ({
     id: String(index + 1), method: "PATCH", url: `/me/todo/lists/${listId}/tasks/${segment(taskId)}`,
     headers: { "Content-Type": "application/json" }, body: { status: "completed" },
   })));
