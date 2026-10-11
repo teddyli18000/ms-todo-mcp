@@ -8,12 +8,13 @@ describe("tool safety boundary", () => {
   });
 
   it("keeps a rich management surface", () => {
-    expect(TOOL_NAMES.length).toBeGreaterThanOrEqual(20);
+    expect(TOOL_NAMES.length).toBeGreaterThanOrEqual(24);
     expect(TOOL_NAMES).toContain("create_task");
     expect(TOOL_NAMES).toContain("update_task");
     expect(TOOL_NAMES).toContain("complete_task");
     expect(TOOL_NAMES).toContain("reopen_task");
     expect(TOOL_NAMES).toContain("summarize_tasks");
+    expect(TOOL_NAMES).toContain("attach_file_to_task");
   });
 
   it("caps batch size at 20", () => {
