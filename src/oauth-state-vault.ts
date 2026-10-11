@@ -7,7 +7,7 @@ const STATE_TTL_MS = 10 * 60 * 1000;
 type StoredOAuthState = { authRequest: AuthRequest; browserNonceDigest: string; expiresAt: number };
 
 export class MicrosoftOAuthStateVault extends DurableObject<Env> {
-  async fetch(request: Request): Promise<Response> {
+  override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "POST" && url.pathname === "/initialize") {
       let body: Partial<{ authRequest: AuthRequest; browserNonceDigest: string }>;
@@ -40,7 +40,7 @@ export class MicrosoftOAuthStateVault extends DurableObject<Env> {
     return json({ error: "not_found" }, 404);
   }
 
-  async alarm(): Promise<void> { await this.ctx.storage.deleteAll(); }
+  override async alarm(): Promise<void> { await this.ctx.storage.deleteAll(); }
 
   private async clear(): Promise<void> {
     await this.ctx.storage.deleteAll();
