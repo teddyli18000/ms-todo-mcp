@@ -12,7 +12,9 @@ export class MicrosoftTodoMCP extends McpAgent<Env, Record<string, never>, Conne
   private async runOperation(operation: ToolOperation): Promise<ToolResult> {
     const requestId = crypto.randomUUID();
     try {
-      return await executeTodoOperation(this.env, this.props, operation);
+      const props = this.props;
+      if (!props) throw new Error("Microsoft To Do connector identity is unavailable. Reconnect the plugin.");
+      return await executeTodoOperation(this.env, props, operation);
     } catch (error) {
       const message = error instanceof ZodError ? formatZod(error) : formatTodoError(error);
       console.error("Microsoft To Do MCP operation failed", { requestId, error: sanitizeLogText(message) });
