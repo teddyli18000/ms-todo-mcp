@@ -9,7 +9,7 @@ const ACCESS_TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 export class MicrosoftTokenVault extends DurableObject<Env> {
   private readonly refreshFlight = new SingleFlight<StoredMicrosoftTokens>();
 
-  async fetch(request: Request): Promise<Response> {
+  override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "POST" && url.pathname === "/initialize") {
       const tokens = (await request.json()) as StoredMicrosoftTokens;
