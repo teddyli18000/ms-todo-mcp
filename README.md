@@ -15,7 +15,7 @@ ChatGPT -> OAuth + MCP over HTTPS -> Cloudflare Worker
 - recurring tasks using Microsoft Graph patterned recurrence;
 - checklist/subtask items: read, create, rename, check and uncheck;
 - linked resources: read, create and update;
-- attachment metadata: read/list;
+- attachments: list metadata and upload one ChatGPT-authorized file at a time, up to 25 MiB;
 - bounded cross-list today/overdue/upcoming summaries;
 - bounded batch create, update and complete operations.
 
@@ -30,6 +30,8 @@ openid profile offline_access Tasks.ReadWrite
 ```
 
 `Tasks.ReadWrite` is the least-privileged delegated Graph permission for creating and updating the signed-in user's Microsoft To Do data. The connector does not request mail, OneDrive/files, calendar, contacts, directory or admin permissions.
+
+The Microsoft authorization-code flow also uses PKCE, a per-login OIDC nonce, browser-bound one-time state, and signature/audience/issuer/timestamp validation of the returned Microsoft ID token before it becomes the connector identity.
 
 ## Deployment
 
