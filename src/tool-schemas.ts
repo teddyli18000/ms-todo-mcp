@@ -29,8 +29,7 @@ const recurrenceRange = z.strictObject({
 });
 export const recurrence = z.strictObject({ pattern: recurrencePattern, range: recurrenceRange });
 
-export const taskFields = {
-  title: title.optional(),
+export const mutableTaskFields = {
   body: z.string().max(1024 * 1024).optional().describe("Task notes/body as plain text."),
   categories: z.array(category).max(25).optional(),
   dueDateTime: dateTimeTimeZone.nullable().optional(),
@@ -70,8 +69,8 @@ export const schemas = {
   list_task_attachments: z.strictObject({ list_id: id, task_id: id }),
   create_task_list: z.strictObject({ display_name: z.string().min(1).max(255) }),
   rename_task_list: z.strictObject({ list_id: id, display_name: z.string().min(1).max(255), expected_etag: z.string().min(1).max(1024).optional() }),
-  create_task: z.strictObject({ list_id: id, title, ...taskFields }),
-  update_task: z.strictObject({ list_id: id, task_id: id, expected_etag: z.string().min(1).max(1024).optional(), ...taskFields }),
+  create_task: z.strictObject({ list_id: id, title, ...mutableTaskFields }),
+  update_task: z.strictObject({ list_id: id, task_id: id, expected_etag: z.string().min(1).max(1024).optional(), title: title.optional(), ...mutableTaskFields }),
   complete_task: z.strictObject({ list_id: id, task_id: id, expected_etag: z.string().min(1).max(1024).optional() }),
   reopen_task: z.strictObject({ list_id: id, task_id: id, expected_etag: z.string().min(1).max(1024).optional() }),
   create_checklist_item: z.strictObject({ list_id: id, task_id: id, display_name: z.string().min(1).max(1024), is_checked: z.boolean().default(false) }),
@@ -95,11 +94,11 @@ export const schemas = {
   }),
   batch_create_tasks: z.strictObject({
     list_id: id,
-    tasks: z.array(z.strictObject({ title, ...taskFields })).min(1).max(20),
+    tasks: z.array(z.strictObject({ title, ...mutableTaskFields })).min(1).max(20),
   }),
   batch_update_tasks: z.strictObject({
     list_id: id,
-    tasks: z.array(z.strictObject({ task_id: id, expected_etag: z.string().min(1).max(1024).optional(), ...taskFields })).min(1).max(20),
+    tasks: z.array(z.strictObject({ task_id: id, expected_etag: z.string().min(1).max(1024).optional(), title: title.optional(), ...mutableTaskFields })).min(1).max(20),
   }),
   batch_complete_tasks: z.strictObject({
     list_id: id,
