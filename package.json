@@ -6,6 +6,7 @@
   "description": "Cloud-only Remote MCP connector for ChatGPT and Microsoft To Do.",
   "scripts": {
     "dev": "wrangler dev",
+    "predeploy": "node scripts/predeploy.mjs",
     "deploy": "wrangler deploy",
     "build-check": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
     "type-check": "tsc --noEmit",
