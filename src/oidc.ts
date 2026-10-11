@@ -3,7 +3,7 @@ import type { MicrosoftIdentity } from "./types";
 const OIDC_CONFIG_URL = "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration";
 const OIDC_FETCH_TIMEOUT_MS = 10_000;
 const CLOCK_SKEW_SECONDS = 5 * 60;
-const TENANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TENANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type JwtHeader = { alg?: string; kid?: string; typ?: string };
 type IdTokenClaims = {
