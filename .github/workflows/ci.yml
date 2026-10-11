@@ -2,11 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main]
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
@@ -16,67 +16,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Probe default npm resolution
-        id: npmprobe
-        shell: bash
-        run: |
-          set +e
-          npm install --ignore-scripts > npm-install.log 2>&1
-          status=$?
-          cat npm-install.log
-          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
-          exit 0
-      - name: Commit generated package lock on branch push
-        if: github.event_name == 'push' && steps.npmprobe.outputs.exit_code == '0'
-        shell: bash
-        run: |
-          if git ls-files --error-unmatch package-lock.json >/dev/null 2>&1; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          git commit -m "chore: add package lock"
-          git push
-      - name: Upload generated package lock
-        if: steps.npmprobe.outputs.exit_code == '0'
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-package-lock
-          path: package-lock.json
-          retention-days: 1
-      - name: Upload npm resolution diagnostics
-        if: steps.npmprobe.outputs.exit_code != '0'
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-resolution-diagnostics
-          path: npm-install.log
-          retention-days: 3
-      - name: Install dependencies with compatible peer resolution
-        if: steps.npmprobe.outputs.exit_code != '0'
-        run: |
-          rm -rf node_modules package-lock.json
-          npm install --ignore-scripts --legacy-peer-deps
-      - name: Capture type-check diagnostics
-        id: typecheck
-        shell: bash
-        run: |
-          set +e
-          npm run type-check > typecheck.log 2>&1
-          status=$?
-          cat typecheck.log
-          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
-          exit 0
-      - name: Upload type-check diagnostics
-        if: steps.typecheck.outputs.exit_code != '0'
-        uses: actions/upload-artifact@v4
-        with:
-          name: typecheck-diagnostics
-          path: typecheck.log
-          retention-days: 3
-      - name: Enforce type-check
-        if: steps.typecheck.outputs.exit_code != '0'
-        run: exit 1
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+      - name: Type-check
+        run: npm run type-check
       - name: Tests
         run: npm test
       - name: Wrangler dry-run build
