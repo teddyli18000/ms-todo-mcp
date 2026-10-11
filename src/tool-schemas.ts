@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_TASK_ATTACHMENT_BYTES } from "./file-input";
 
 export const id = z.string().min(1).max(1024);
 const title = z.string().min(1).max(1024);
@@ -19,14 +20,37 @@ const recurrencePattern = z.strictObject({
   firstDayOfWeek: dayOfWeek.optional(),
   index: z.enum(["first", "second", "third", "fourth", "last"]).optional(),
   month: z.number().int().min(1).max(12).optional(),
+}).superRefine((value, ctx) => {
+  if (value.type === "weekly" && !value.daysOfWeek) issue(ctx, "daysOfWeek is required for weekly recurrence.", ["daysOfWeek"]);
+  if (value.type === "absoluteMonthly" && value.dayOfMonth === undefined) issue(ctx, "dayOfMonth is required for absoluteMonthly recurrence.", ["dayOfMonth"]);
+  if (value.type === "relativeMonthly") {
+    if (!value.daysOfWeek) issue(ctx, "daysOfWeek is required for relativeMonthly recurrence.", ["daysOfWeek"]);
+    if (!value.index) issue(ctx, "index is required for relativeMonthly recurrence.", ["index"]);
+  }
+  if (value.type === "absoluteYearly") {
+    if (value.month === undefined) issue(ctx, "month is required for absoluteYearly recurrence.", ["month"]);
+    if (value.dayOfMonth === undefined) issue(ctx, "dayOfMonth is required for absoluteYearly recurrence.", ["dayOfMonth"]);
+  }
+  if (value.type === "relativeYearly") {
+    if (value.month === undefined) issue(ctx, "month is required for relativeYearly recurrence.", ["month"]);
+    if (!value.daysOfWeek) issue(ctx, "daysOfWeek is required for relativeYearly recurrence.", ["daysOfWeek"]);
+    if (!value.index) issue(ctx, "index is required for relativeYearly recurrence.", ["index"]);
+  }
 });
+
 const recurrenceRange = z.strictObject({
   type: z.enum(["endDate", "noEnd", "numbered"]),
   startDate: date,
   endDate: date.optional(),
   numberOfOccurrences: z.number().int().min(1).max(9999).optional(),
   recurrenceTimeZone: z.string().min(1).max(128).optional(),
+}).superRefine((value, ctx) => {
+  if (value.type === "endDate" && !value.endDate) issue(ctx, "endDate is required for an endDate recurrence range.", ["endDate"]);
+  if (value.type === "numbered" && value.numberOfOccurrences === undefined) {
+    issue(ctx, "numberOfOccurrences is required for a numbered recurrence range.", ["numberOfOccurrences"]);
+  }
 });
+
 export const recurrence = z.strictObject({ pattern: recurrencePattern, range: recurrenceRange });
 
 export const mutableTaskFields = {
@@ -40,6 +64,15 @@ export const mutableTaskFields = {
   status: z.enum(["notStarted", "inProgress", "completed", "waitingOnOthers", "deferred"]).optional(),
   recurrence: recurrence.nullable().optional(),
 } as const;
+
+export const chatGptFile = z.strictObject({
+  file_id: z.string().min(3),
+  download_url: z.string().url(),
+  file_name: z.string().max(250).optional(),
+  name: z.string().max(250).optional(),
+  mime_type: z.string().max(255).optional(),
+  size: z.number().int().positive().max(MAX_TASK_ATTACHMENT_BYTES).optional(),
+});
 
 export const schemas = {
   get_todo_capabilities: z.strictObject({}),
@@ -92,6 +125,7 @@ export const schemas = {
     display_name: z.string().min(1).max(1024).optional(),
     external_id: z.string().min(1).max(1024).optional(),
   }),
+  attach_file_to_task: z.strictObject({ list_id: id, task_id: id, file: chatGptFile }),
   batch_create_tasks: z.strictObject({
     list_id: id,
     tasks: z.array(z.strictObject({ title, ...mutableTaskFields })).min(1).max(20),
@@ -108,3 +142,7 @@ export const schemas = {
 
 export type ToolName = keyof typeof schemas;
 export const TOOL_NAMES = Object.keys(schemas) as ToolName[];
+
+function issue(ctx: z.RefinementCtx, message: string, path: PropertyKey[]): void {
+  ctx.addIssue({ code: "custom", message, path });
+}
