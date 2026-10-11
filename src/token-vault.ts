@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { refreshMicrosoftTokens } from "./microsoft";
 import { SingleFlight } from "./single-flight";
+import { chooseMicrosoftRefreshCommit } from "./token-generation";
 import type { StoredMicrosoftTokens } from "./types";
 
 const TOKEN_STORAGE_KEY = "microsoft_tokens";
@@ -47,10 +48,9 @@ export class MicrosoftTokenVault extends DurableObject<Env> {
       refreshToken: source.refreshToken,
     });
     const current = await this.ctx.storage.get<StoredMicrosoftTokens>(TOKEN_STORAGE_KEY);
-    if (!current) throw new Error("Microsoft OAuth credentials disappeared while refreshing.");
-    if (current.refreshToken !== source.refreshToken) return current;
-    await this.ctx.storage.put(TOKEN_STORAGE_KEY, refreshed);
-    return refreshed;
+    const decision = chooseMicrosoftRefreshCommit(source.refreshToken, refreshed, current);
+    if (decision.shouldPersist) await this.ctx.storage.put(TOKEN_STORAGE_KEY, decision.tokens);
+    return decision.tokens;
   }
 }
 
