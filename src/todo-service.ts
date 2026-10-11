@@ -1,3 +1,5 @@
+import { uploadTaskAttachment } from "./attachment-service";
+import { prepareTaskAttachment } from "./file-input";
 import { decodeGraphCursor, encodeGraphCursor, graphBatch, GraphApiError, graphJson } from "./graph";
 import type { ConnectorProps, GraphTodoTask, GraphTodoTaskList, ToolOperation, ToolResult } from "./types";
 
@@ -21,7 +23,7 @@ export async function executeTodoOperation(env: Env, props: ConnectorProps, oper
           "task fields: notes/categories/due/start/reminder/importance/status/recurrence",
           "checklist items: read/create/update/check/uncheck",
           "linked resources: read/create/update",
-          "attachments: list metadata",
+          "attachments: list metadata/upload ChatGPT-authorized files up to 25 MiB",
           "bounded batch create/update/complete",
           "today/overdue/upcoming summaries",
         ],
@@ -73,6 +75,10 @@ export async function executeTodoOperation(env: Env, props: ConnectorProps, oper
       const body = removeUndefined({ webUrl: input.web_url, applicationName: input.application_name, displayName: input.display_name, externalId: input.external_id });
       requireNonEmpty(body, "linked resource update");
       return result(await graphJson(accessToken, `${taskPath(input.list_id, input.task_id)}/linkedResources/${segment(input.linked_resource_id)}`, patch(body)));
+    }
+    case "attach_file_to_task": {
+      const attachment = await prepareTaskAttachment(input.file);
+      return result(await uploadTaskAttachment(accessToken, input.list_id, input.task_id, attachment));
     }
     case "batch_create_tasks":
       return result(await batchCreateTasks(accessToken, input));
