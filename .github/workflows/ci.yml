@@ -26,6 +26,13 @@ jobs:
           cat npm-install.log
           echo "exit_code=$status" >> "$GITHUB_OUTPUT"
           exit 0
+      - name: Upload generated package lock
+        if: steps.npmprobe.outputs.exit_code == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-package-lock
+          path: package-lock.json
+          retention-days: 1
       - name: Upload npm resolution diagnostics
         if: steps.npmprobe.outputs.exit_code != '0'
         uses: actions/upload-artifact@v4
