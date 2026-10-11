@@ -1,3 +1,4 @@
+import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { schemas, type ToolName } from "./tool-schemas";
 import type { RunToolOperation, ToolResult } from "./types";
@@ -25,6 +26,7 @@ const specs: Record<ToolName, ToolSpec> = {
   update_checklist_item: { title: "Update task checklist item", description: "Rename or check/uncheck a checklist item. Deletion is intentionally unavailable.", readOnly: false, idempotent: true },
   create_linked_resource: { title: "Create task linked resource", description: "Attach an external URL/reference to a task without granting arbitrary HTTP access.", readOnly: false, idempotent: false },
   update_linked_resource: { title: "Update task linked resource", description: "Update an existing linked-resource record. Deletion is intentionally unavailable.", readOnly: false, idempotent: true },
+  attach_file_to_task: { title: "Attach file to Microsoft To Do task", description: "Attach one ChatGPT-authorized file to a task using the Microsoft To Do upload-session API. Files are bounded to 25 MiB. This tool cannot delete attachments.", readOnly: false, idempotent: false },
   batch_create_tasks: { title: "Batch create Microsoft To Do tasks", description: "Create up to 20 tasks in one bounded Microsoft Graph batch.", readOnly: false, idempotent: false },
   batch_update_tasks: { title: "Batch update Microsoft To Do tasks", description: "Update up to 20 tasks in one bounded batch. Each item may include an expected ETag.", readOnly: false, idempotent: true },
   batch_complete_tasks: { title: "Batch complete Microsoft To Do tasks", description: "Mark up to 20 tasks completed in one bounded batch.", readOnly: false, idempotent: true },
@@ -33,10 +35,13 @@ const specs: Record<ToolName, ToolSpec> = {
 export const TOOL_NAMES = Object.keys(specs) as ToolName[];
 
 export function registerTodoTools(server: McpServer, run: RunToolOperation): void {
-  for (const name of TOOL_NAMES) registerTool(server, run, name, specs[name]);
+  for (const name of TOOL_NAMES) {
+    if (name === "attach_file_to_task") registerFileTool(server, run);
+    else registerTool(server, run, name, specs[name]);
+  }
 }
 
-function registerTool(server: McpServer, run: RunToolOperation, name: ToolName, spec: ToolSpec): void {
+function registerTool(server: McpServer, run: RunToolOperation, name: Exclude<ToolName, "attach_file_to_task">, spec: ToolSpec): void {
   const schema = schemas[name];
   (server.registerTool as unknown as (
     name: string,
@@ -53,4 +58,27 @@ function registerTool(server: McpServer, run: RunToolOperation, name: ToolName, 
       openWorldHint: true,
     },
   }, async (raw: unknown) => run({ name, input: schema.parse(raw) as Record<string, unknown> }));
+}
+
+function registerFileTool(server: McpServer, run: RunToolOperation): void {
+  const name = "attach_file_to_task" as const;
+  const schema = schemas[name];
+  const spec = specs[name];
+  registerAppTool(
+    server,
+    name,
+    {
+      title: spec.title,
+      description: spec.description,
+      inputSchema: schema.shape,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+      _meta: { "openai/fileParams": ["file"] },
+    },
+    async (raw: unknown) => run({ name, input: schema.parse(raw) as Record<string, unknown> }),
+  );
 }
