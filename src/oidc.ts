@@ -59,7 +59,7 @@ function parseJwt(idToken: string): {
   header: JwtHeader;
   claims: IdTokenClaims;
   signingInput: string;
-  signature: Uint8Array;
+  signature: ArrayBuffer;
 } {
   const parts = idToken.split(".");
   if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) throw new Error("Microsoft ID token was malformed.");
@@ -143,10 +143,13 @@ async function fetchJson<T>(url: string): Promise<T> {
   }
 }
 
-function base64UrlDecode(value: string): Uint8Array {
+function base64UrlDecode(value: string): ArrayBuffer {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("Invalid base64url encoding.");
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
   const binary = atob(padded);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const buffer = new ArrayBuffer(binary.length);
+  const bytes = new Uint8Array(buffer);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return buffer;
 }
