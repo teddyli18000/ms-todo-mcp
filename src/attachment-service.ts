@@ -68,6 +68,8 @@ async function uploadChunk(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
   try {
+    const body = new Uint8Array(chunk.byteLength);
+    body.set(chunk);
     return await fetch(url, {
       method: "PUT",
       headers: {
@@ -76,7 +78,7 @@ async function uploadChunk(
         "Content-Length": String(chunk.byteLength),
         "Content-Range": `bytes ${start}-${end}/${total}`,
       },
-      body: chunk,
+      body: body.buffer,
       signal: controller.signal,
     });
   } catch (error) {
