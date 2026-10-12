@@ -1,0 +1,38 @@
+{
+  "name": "ms-todo-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloud-only Remote MCP connector for ChatGPT and Microsoft To Do.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "predeploy": "node scripts/predeploy.mjs",
+    "deploy": "wrangler deploy",
+    "build-check": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "verify": "npm run type-check && npm test",
+    "check": "npm run verify && npm run build-check",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "0.8.1",
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "agents": "0.17.1",
+    "hono": "4.13.13",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260926.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.149.0"
+  },
+  "overrides": {
+    "@modelcontextprotocol/sdk": "1.32.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
