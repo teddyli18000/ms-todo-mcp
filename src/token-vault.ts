@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { refreshMicrosoftTokens } from "./microsoft";
+import { getMicrosoftRuntimeConfig } from "./runtime-config";
 import { SingleFlight } from "./single-flight";
 import { chooseMicrosoftRefreshCommit } from "./token-generation";
 import type { StoredMicrosoftTokens } from "./types";
@@ -42,9 +43,10 @@ export class MicrosoftTokenVault extends DurableObject<Env> {
     const source = await this.ctx.storage.get<StoredMicrosoftTokens>(TOKEN_STORAGE_KEY);
     if (!source) throw new Error("No Microsoft OAuth credentials are stored for this user.");
     if (isAccessTokenFresh(source)) return source;
+    const config = getMicrosoftRuntimeConfig(this.env);
     const refreshed = await refreshMicrosoftTokens({
-      clientId: this.env.MICROSOFT_CLIENT_ID,
-      clientSecret: this.env.MICROSOFT_CLIENT_SECRET,
+      clientId: config.clientId,
+      clientSecret: config.clientSecret,
       refreshToken: source.refreshToken,
     });
     const current = await this.ctx.storage.get<StoredMicrosoftTokens>(TOKEN_STORAGE_KEY);
@@ -67,7 +69,7 @@ function validateStoredTokens(tokens: StoredMicrosoftTokens): void {
 function safeMessage(error: unknown): string {
   return (error instanceof Error ? error.message : "Microsoft authorization is unavailable.")
     .replace(/Bearer\s+[^\s]+/gi, "Bearer [REDACTED]")
-    .replace(/(?:access_token|refresh_token)\s*[=:]\s*[^\s,;]+/gi, "$1=[REDACTED]")
+    .replace(/(access_token|refresh_token)\s*[=:]\s*[^\s,;]+/gi, "$1=[REDACTED]")
     .slice(0, 800);
 }
 
