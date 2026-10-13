@@ -23,6 +23,18 @@ The connector exposes 24 bounded model-facing tools:
 
 There is deliberately **no** task/list/checklist/resource/attachment deletion and no arbitrary Graph HTTP tool. The Microsoft permission itself is read/write, but deletion is not part of this connector's model-facing capability surface or Graph request paths.
 
+## GPT collaboration model
+
+The connector teaches agents a small task-management convention without changing the Microsoft To Do data model:
+
+- real tasks stay in the most appropriate existing list, with `Tasks` as the fallback;
+- `🤖 GPT` is reserved for ongoing GPT participation such as planning, research, review, tracking, waiting, and follow-up;
+- GPT tickets reference source tasks instead of mirroring them;
+- user-written note text is preserved, while GPT keeps a compact human-readable workspace plus stable ID-based machine state below it;
+- real deadlines are not changed merely to represent today's plan.
+
+See [`docs/GPT-COLLABORATION.md`](docs/GPT-COLLABORATION.md) for the protocol. Runtime guidance is centralized in `src/model-guidance.ts` so tool descriptions stay short.
+
 ## Permission boundary
 
 The upstream Microsoft sign-in requests only:
