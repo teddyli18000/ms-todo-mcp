@@ -1,6 +1,7 @@
 import { uploadTaskAttachment } from "./attachment-service";
 import { prepareTaskAttachment } from "./file-input";
 import { decodeGraphCursor, encodeGraphCursor, graphBatch, GraphApiError, graphJson } from "./graph";
+import { mergeProtectedTaskNote } from "./gpt-notes";
 import type { ConnectorProps, GraphTodoTask, GraphTodoTaskList, ToolOperation, ToolResult } from "./types";
 
 const MAX_LISTS_FOR_CROSS_LIST_SCAN = 50;
@@ -58,8 +59,10 @@ export async function executeTodoOperation(env: Env, props: ConnectorProps, oper
       return result(await graphJson(accessToken, `/me/todo/lists/${segment(input.list_id)}`, patch({ displayName: input.display_name }, input.expected_etag)));
     case "create_task":
       return result(await graphJson(accessToken, `/me/todo/lists/${segment(input.list_id)}/tasks`, { method: "POST", body: JSON.stringify(toGraphTaskPatch(input, true)) }));
-    case "update_task":
-      return result(await graphJson(accessToken, taskPath(input.list_id, input.task_id), patch(toGraphTaskPatch(input, false), input.expected_etag)));
+    case "update_task": {
+      const prepared = await protectTaskNoteUpdate(accessToken, input.list_id, input.task_id, input);
+      return result(await graphJson(accessToken, taskPath(input.list_id, input.task_id), patch(toGraphTaskPatch(prepared.input, false), prepared.expectedEtag)));
+    }
     case "complete_task":
       return result(await graphJson(accessToken, taskPath(input.list_id, input.task_id), patch({ status: "completed" }, input.expected_etag)));
     case "reopen_task":
@@ -277,6 +280,20 @@ function compareSummaryDue(left: SummaryEntry, right: SummaryEntry): number {
   return leftDue.localeCompare(rightDue);
 }
 
+async function protectTaskNoteUpdate(
+  accessToken: string,
+  listId: string,
+  taskId: string,
+  input: ParsedInput,
+): Promise<{ input: ParsedInput; expectedEtag?: string }> {
+  if (input.body === undefined) return { input, expectedEtag: input.expected_etag };
+  const current = await graphJson<GraphTodoTask>(accessToken, taskPath(listId, taskId));
+  return {
+    input: { ...input, body: mergeProtectedTaskNote(current.body?.content ?? "", input.body) },
+    expectedEtag: input.expected_etag ?? current["@odata.etag"],
+  };
+}
+
 function toGraphTaskPatch(input: ParsedInput, creating: boolean): Record<string, unknown> {
   const body = removeUndefined({
     title: input.title,
@@ -304,13 +321,41 @@ async function batchCreateTasks(accessToken: string, input: ParsedInput): Promis
 }
 
 async function batchUpdateTasks(accessToken: string, input: ParsedInput): Promise<unknown> {
+  const preparedTasks = await protectBatchTaskNotes(accessToken, input.list_id, input.tasks);
   const listId = segment(input.list_id);
-  const responses = await graphBatch(accessToken, input.tasks.map((task: ParsedInput, index: number) => ({
+  const responses = await graphBatch(accessToken, preparedTasks.map((task: ParsedInput, index: number) => ({
     id: String(index + 1), method: "PATCH", url: `/me/todo/lists/${listId}/tasks/${segment(task.task_id)}`,
     headers: removeUndefined({ "Content-Type": "application/json", "If-Match": task.expected_etag }),
     body: toGraphTaskPatch(task, false),
   })));
   return normalizeBatchResponses(responses);
+}
+
+async function protectBatchTaskNotes(accessToken: string, listId: string, tasks: ParsedInput[]): Promise<ParsedInput[]> {
+  const reads = tasks
+    .map((task, index) => ({ task, index }))
+    .filter(({ task }) => task.body !== undefined);
+  if (reads.length === 0) return tasks;
+
+  const responses = await graphBatch< { id: string; status: number; body?: unknown } >(
+    accessToken,
+    reads.map(({ task, index }) => ({ id: String(index), method: "GET", url: taskPath(listId, task.task_id) })),
+  );
+  const responseById = new Map(responses.map((response) => [response.id, response]));
+
+  return tasks.map((task, index) => {
+    if (task.body === undefined) return task;
+    const response = responseById.get(String(index));
+    if (!response || response.status < 200 || response.status >= 300 || !response.body) {
+      throw new Error(`Unable to re-read task ${task.task_id} before updating protected notes.`);
+    }
+    const current = response.body as GraphTodoTask;
+    return {
+      ...task,
+      body: mergeProtectedTaskNote(current.body?.content ?? "", task.body),
+      expected_etag: task.expected_etag ?? current["@odata.etag"],
+    };
+  });
 }
 
 async function batchCompleteTasks(accessToken: string, input: ParsedInput): Promise<unknown> {
