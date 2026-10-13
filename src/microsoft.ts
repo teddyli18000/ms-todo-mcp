@@ -124,6 +124,6 @@ function normalizeTokens(payload: TokenPayload, refreshToken: string): StoredMic
 function sanitizeOAuthError(value: string): string {
   return value
     .replace(/[\r\n\t]+/g, " ")
-    .replace(/(?:access_token|refresh_token|client_secret|code_verifier)=[^\s&]+/gi, "$1=[REDACTED]")
+    .replace(/(access_token|refresh_token|client_secret|code_verifier)=[^\s&]+/gi, "$1=[REDACTED]")
     .slice(0, 600);
 }
