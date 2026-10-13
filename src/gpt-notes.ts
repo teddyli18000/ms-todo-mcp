@@ -18,10 +18,16 @@ export function mergeProtectedTaskNote(existing: string, proposed: string): stri
   if (proposedMarker < 0 || existing.length === 0) return proposed;
 
   const proposedPrefix = proposed.slice(0, proposedMarker);
-  if (proposedPrefix === existing || proposedPrefix.trimEnd() === existing.trimEnd()) {
-    return existing + proposed.slice(proposedMarker);
+  if (proposedPrefix.startsWith(existing) && proposedPrefix.slice(existing.length).trim() === "") {
+    return existing + proposedPrefix.slice(existing.length) + proposed.slice(proposedMarker);
+  }
+  if (proposedPrefix.trimEnd() === existing.trimEnd()) {
+    return existing + noteSeparator(existing) + proposed.slice(proposedMarker);
   }
 
-  const separator = existing.endsWith("\n") ? "\n\n" : "\n\n\n";
-  return existing + separator + proposed.slice(proposedMarker);
+  return existing + noteSeparator(existing) + proposed.slice(proposedMarker);
+}
+
+function noteSeparator(existing: string): string {
+  return existing.endsWith("\n") ? "\n\n" : "\n\n\n";
 }
