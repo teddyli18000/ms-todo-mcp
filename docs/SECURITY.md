@@ -13,7 +13,9 @@ Never commit:
 - Cloudflare deployment credentials;
 - live connector OAuth tokens/state.
 
-Use `wrangler secret put` for Microsoft app credentials. Per-user Microsoft tokens live only in Durable Object storage.
+Store Microsoft values as **Worker runtime** variables/secrets in Cloudflare, not only as build-time variables. `MICROSOFT_CLIENT_SECRET` must be a runtime Secret. A trusted CLI deployment may use `wrangler secret put` instead. Per-user Microsoft tokens live only in Durable Object storage.
+
+The Worker validates that the Microsoft client ID and client secret are present at runtime before reporting healthy or starting upstream authorization. Secret values are never returned by the health endpoint.
 
 ## Least privilege
 
@@ -34,7 +36,7 @@ Before the Microsoft identity becomes a connector identity, the Worker verifies 
 
 ## File attachment boundary
 
-`attach_file_to_task` accepts only a ChatGPT-authorized top-level file-reference object. The Worker enforces:
+`attach_file_to_task` is registered as an OpenAI file-parameter tool and accepts one structured file-reference object rather than an arbitrary path/string. The Worker then enforces:
 
 - HTTPS-only downloads;
 - rejection of local/private-looking destination names and literal IPs;
@@ -45,7 +47,13 @@ Before the Microsoft identity becomes a connector identity, the Worker verifies 
 - a Microsoft To Do upload session with sequential 2 MiB ranges;
 - only Microsoft Graph v1.0 upload-session URLs returned by the trusted Graph API.
 
+The attachment tool is deliberately marked `openWorldHint=true` because the Worker fetches the supplied HTTPS file reference. Non-ChatGPT MCP clients must not treat the file-reference shape itself as cryptographic proof of origin; the URL/size/network restrictions remain the server-side enforcement boundary.
+
 Upload-session URLs and bearer tokens never appear in MCP output. The connector deliberately does not expose the API that cancels/deletes an upload session or the API that deletes an attached file.
+
+## GPT collaboration note ownership
+
+For collaboration tickets, text before `──── GPT ────` is user-owned. Runtime note writes re-read the existing task and preserve that prefix; dropping the marker from an existing GPT collaboration note is rejected. The human-readable and machine GPT regions remain state only and never become authorization for unrelated writes.
 
 ## Untrusted task content
 
