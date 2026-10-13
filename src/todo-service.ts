@@ -218,7 +218,7 @@ async function collectTaskLists(accessToken: string): Promise<BoundedCollection<
   const output: GraphTodoTaskList[] = [];
   let url: string | undefined = "/me/todo/lists?$top=100";
   for (let page = 0; url && page < 5; page += 1) {
-    const payload = await graphJson<ListResponse<GraphTodoTaskList>>(accessToken, url);
+    const payload: ListResponse<GraphTodoTaskList> = await graphJson<ListResponse<GraphTodoTaskList>>(accessToken, url);
     output.push(...payload.value);
     url = payload["@odata.nextLink"];
   }
@@ -229,7 +229,7 @@ async function collectTasks(accessToken: string, listId: string, maxTasks: numbe
   const output: GraphTodoTask[] = [];
   let url: string | undefined = `/me/todo/lists/${segment(listId)}/tasks?$top=${Math.min(100, maxTasks)}`;
   for (let page = 0; url && page < 5 && output.length < maxTasks; page += 1) {
-    const payload = await graphJson<ListResponse<GraphTodoTask>>(accessToken, url);
+    const payload: ListResponse<GraphTodoTask> = await graphJson<ListResponse<GraphTodoTask>>(accessToken, url);
     output.push(...payload.value);
     url = payload["@odata.nextLink"];
   }
@@ -272,8 +272,9 @@ function bodyExcerpt(body: string, needle: string): string | undefined {
 }
 
 function compareSummaryDue(left: SummaryEntry, right: SummaryEntry): number {
-  return String(left.task.dueDateTime && (left.task.dueDateTime as { dateTime?: string }).dateTime || "")
-    .localeCompare(String(right.task.dueDateTime && (right.task.dueDateTime as { dateTime?: string }).dateTime || ""));
+  const leftDue = (left.task.dueDateTime as GraphTodoTask["dueDateTime"] | undefined)?.dateTime ?? "";
+  const rightDue = (right.task.dueDateTime as GraphTodoTask["dueDateTime"] | undefined)?.dateTime ?? "";
+  return leftDue.localeCompare(rightDue);
 }
 
 function toGraphTaskPatch(input: ParsedInput, creating: boolean): Record<string, unknown> {
