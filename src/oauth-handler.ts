@@ -2,22 +2,38 @@ import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { Hono } from "hono";
 import { buildMicrosoftAuthorizeUrl, exchangeMicrosoftAuthorizationCode } from "./microsoft";
 import { consumeOAuthState, createOAuthState } from "./oauth-state";
+import { getMicrosoftRuntimeConfig, isMicrosoftRuntimeConfigured } from "./runtime-config";
 import type { ConnectorProps } from "./types";
 import { CONNECTOR_VERSION } from "./version";
 
 const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
 
-app.get("/", (c) => c.json({ name: "ms-todo-mcp", version: CONNECTOR_VERSION, status: "ok", mcp: "/mcp" }, 200, { "Cache-Control": "no-store" }));
-app.get("/health", (c) => c.json({ ok: true, version: CONNECTOR_VERSION }, 200, { "Cache-Control": "no-store" }));
+app.get("/", (c) => {
+  const configured = isMicrosoftRuntimeConfigured(c.env);
+  return c.json(
+    { name: "ms-todo-mcp", version: CONNECTOR_VERSION, status: configured ? "ok" : "misconfigured", mcp: "/mcp" },
+    configured ? 200 : 503,
+    { "Cache-Control": "no-store" },
+  );
+});
+app.get("/health", (c) => {
+  const configured = isMicrosoftRuntimeConfigured(c.env);
+  return c.json(
+    { ok: configured, version: CONNECTOR_VERSION, microsoft_oauth_configured: configured },
+    configured ? 200 : 503,
+    { "Cache-Control": "no-store" },
+  );
+});
 
 app.get("/authorize", async (c) => {
   try {
+    const config = getMicrosoftRuntimeConfig(c.env);
     const authRequest = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
     if (!authRequest.clientId) return c.text("Invalid OAuth client.", 400);
     const { state, setCookie, oidcNonce, codeChallenge } = await createOAuthState(authRequest, c.env.MICROSOFT_OAUTH_STATE);
     const redirectUri = new URL("/oauth/microsoft/callback", c.req.url).toString();
     const authorizeUrl = buildMicrosoftAuthorizeUrl({
-      clientId: c.env.MICROSOFT_CLIENT_ID,
+      clientId: config.clientId,
       redirectUri,
       state,
       oidcNonce,
@@ -34,14 +50,15 @@ app.get("/oauth/microsoft/callback", async (c) => {
   const upstreamError = c.req.query("error");
   if (upstreamError) return c.text(`Microsoft authorization was not completed: ${safeQueryText(upstreamError)}`, 400);
   try {
+    const config = getMicrosoftRuntimeConfig(c.env);
     const { authRequest, clearCookie, oidcNonce, codeVerifier } = await consumeOAuthState(c.req.raw, c.env.MICROSOFT_OAUTH_STATE);
     if (!authRequest.clientId) return c.text("Invalid OAuth request.", 400);
     const code = c.req.query("code");
     if (!code) return c.text("Microsoft did not return an authorization code.", 400);
     const redirectUri = new URL("/oauth/microsoft/callback", c.req.url).toString();
     const { tokens, identity } = await exchangeMicrosoftAuthorizationCode({
-      clientId: c.env.MICROSOFT_CLIENT_ID,
-      clientSecret: c.env.MICROSOFT_CLIENT_SECRET,
+      clientId: config.clientId,
+      clientSecret: config.clientSecret,
       code,
       redirectUri,
       codeVerifier,
@@ -75,7 +92,7 @@ function safeQueryText(value: string): string {
 
 function safeError(error: unknown): string {
   return (error instanceof Error ? error.message : "Unknown error")
-    .replace(/(?:access_token|refresh_token|client_secret|code_verifier)\s*[=:]\s*[^\s,;]+/gi, "$1=[REDACTED]")
+    .replace(/(access_token|refresh_token|client_secret|code_verifier)\s*[=:]\s*[^\s,;]+/gi, "$1=[REDACTED]")
     .slice(0, 800);
 }
 
