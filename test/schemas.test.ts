@@ -35,6 +35,12 @@ describe("task schemas", () => {
     expect(schemas.create_task.safeParse({ list_id: "list" }).success).toBe(false);
   });
 
+  it("bounds summary output buckets", () => {
+    const defaults = schemas.summarize_tasks.parse({});
+    expect(defaults.max_items_per_bucket).toBe(25);
+    expect(schemas.summarize_tasks.safeParse({ max_items_per_bucket: 101 }).success).toBe(false);
+  });
+
   it("bounds ChatGPT task attachments to 25 MiB", () => {
     const base = {
       list_id: "list",
