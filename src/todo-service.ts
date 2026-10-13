@@ -4,9 +4,13 @@ import { decodeGraphCursor, encodeGraphCursor, graphBatch, GraphApiError, graphJ
 import type { ConnectorProps, GraphTodoTask, GraphTodoTaskList, ToolOperation, ToolResult } from "./types";
 
 const MAX_LISTS_FOR_CROSS_LIST_SCAN = 50;
+const SEARCH_TASKS_PER_LIST = 200;
+const SEARCH_BODY_EXCERPT_CHARS = 320;
 
 type ListResponse<T> = { value: T[]; "@odata.nextLink"?: string };
+type BoundedCollection<T> = { items: T[]; truncated: boolean };
 type ParsedInput = Record<string, any>;
+type SummaryEntry = { list_id: string; list_name: string; task: ReturnType<typeof compactTask> };
 
 export async function executeTodoOperation(env: Env, props: ConnectorProps, operation: ToolOperation): Promise<ToolResult> {
   const accessToken = await getAccessToken(env, props.userId);
@@ -16,7 +20,8 @@ export async function executeTodoOperation(env: Env, props: ConnectorProps, oper
       return result({
         connected_identity: { display_name: props.displayName, username: props.username },
         graph_scope: "Tasks.ReadWrite",
-        destructive_operations: false,
+        deletion_available: false,
+        writes_can_modify_existing_data: true,
         capabilities: [
           "lists: read/create/rename",
           "tasks: read/search/create/update/complete/reopen",
@@ -25,9 +30,9 @@ export async function executeTodoOperation(env: Env, props: ConnectorProps, oper
           "linked resources: read/create/update",
           "attachments: list metadata/upload ChatGPT-authorized files up to 25 MiB",
           "bounded batch create/update/complete",
-          "today/overdue/upcoming summaries",
+          "due-date-based today/overdue/upcoming summaries",
         ],
-        unavailable: ["delete task", "delete list", "delete checklist item", "delete linked resource", "delete attachment", "arbitrary Graph passthrough"],
+        unavailable: ["delete task", "delete list", "delete checklist item", "delete linked resource", "delete attachment", "Microsoft To Do My Day view", "arbitrary Graph passthrough"],
       });
     case "list_task_lists":
       return result(await listTaskLists(accessToken, input));
@@ -115,61 +120,160 @@ async function listTasks(accessToken: string, input: ParsedInput): Promise<unkno
 }
 
 async function searchTasks(accessToken: string, input: ParsedInput): Promise<unknown> {
-  const lists = await collectTaskLists(accessToken);
+  const listScan = await collectTaskLists(accessToken);
+  const lists = listScan.items.slice(0, MAX_LISTS_FOR_CROSS_LIST_SCAN);
   const needle = String(input.query).toLocaleLowerCase();
-  const matches: Array<{ list: GraphTodoTaskList; task: GraphTodoTask }> = [];
-  for (const list of lists.slice(0, MAX_LISTS_FOR_CROSS_LIST_SCAN)) {
-    const tasks = await collectTasks(accessToken, list.id, 200);
-    for (const task of tasks) {
+  const matches: unknown[] = [];
+  let taskScanTruncated = false;
+  const listScanTruncated = listScan.truncated || listScan.items.length > MAX_LISTS_FOR_CROSS_LIST_SCAN;
+
+  for (const list of lists) {
+    const taskScan = await collectTasks(accessToken, list.id, SEARCH_TASKS_PER_LIST);
+    taskScanTruncated ||= taskScan.truncated;
+    for (const task of taskScan.items) {
       if (!input.include_completed && task.status === "completed") continue;
-      const haystack = `${task.title ?? ""}\n${task.body?.content ?? ""}\n${(task.categories ?? []).join(" ")}`.toLocaleLowerCase();
-      if (haystack.includes(needle)) matches.push({ list, task });
-      if (matches.length >= input.max_results) return { matches, truncated: true };
+      const matchedFields = taskMatchedFields(task, needle);
+      if (matchedFields.length === 0) continue;
+      const notesExcerpt = matchedFields.includes("notes") ? bodyExcerpt(task.body?.content ?? "", needle) : undefined;
+      matches.push({
+        list_id: list.id,
+        list_name: list.displayName,
+        task: compactTask(task),
+        matched_fields: matchedFields,
+        ...(notesExcerpt ? { notes_excerpt: notesExcerpt } : {}),
+      });
+      if (matches.length >= input.max_results) {
+        return {
+          matches,
+          truncated: true,
+          truncation: { result_limit: true, list_scan: listScanTruncated, task_scan: taskScanTruncated },
+        };
+      }
     }
   }
-  return { matches, truncated: false };
+  const truncated = listScanTruncated || taskScanTruncated;
+  return { matches, truncated, truncation: { result_limit: false, list_scan: listScanTruncated, task_scan: taskScanTruncated } };
 }
 
 async function summarizeTasks(accessToken: string, input: ParsedInput): Promise<unknown> {
   const today = input.today ?? new Date().toISOString().slice(0, 10);
   const upcomingEnd = addDays(today, input.days_ahead);
-  const lists = await collectTaskLists(accessToken);
-  const summary = { today, overdue: [] as unknown[], due_today: [] as unknown[], upcoming: [] as unknown[], without_due_date: [] as unknown[], truncated_lists: lists.length > MAX_LISTS_FOR_CROSS_LIST_SCAN };
-  for (const list of lists.slice(0, MAX_LISTS_FOR_CROSS_LIST_SCAN)) {
-    const tasks = await collectTasks(accessToken, list.id, input.max_tasks_per_list);
-    for (const task of tasks) {
+  const listScan = await collectTaskLists(accessToken);
+  const lists = listScan.items.slice(0, MAX_LISTS_FOR_CROSS_LIST_SCAN);
+  const listScanTruncated = listScan.truncated || listScan.items.length > MAX_LISTS_FOR_CROSS_LIST_SCAN;
+  let taskScanTruncated = false;
+  const buckets = {
+    overdue: [] as SummaryEntry[],
+    due_today: [] as SummaryEntry[],
+    upcoming: [] as SummaryEntry[],
+    without_due_date: [] as SummaryEntry[],
+  };
+
+  for (const list of lists) {
+    const taskScan = await collectTasks(accessToken, list.id, input.max_tasks_per_list);
+    taskScanTruncated ||= taskScan.truncated;
+    for (const task of taskScan.items) {
       if (!input.include_completed && task.status === "completed") continue;
-      const entry = { list_id: list.id, list_name: list.displayName, task };
+      const entry: SummaryEntry = { list_id: list.id, list_name: list.displayName, task: compactTask(task) };
       const due = task.dueDateTime?.dateTime?.slice(0, 10);
-      if (!due) summary.without_due_date.push(entry);
-      else if (due < today) summary.overdue.push(entry);
-      else if (due === today) summary.due_today.push(entry);
-      else if (due <= upcomingEnd) summary.upcoming.push(entry);
+      if (!due) buckets.without_due_date.push(entry);
+      else if (due < today) buckets.overdue.push(entry);
+      else if (due === today) buckets.due_today.push(entry);
+      else if (due <= upcomingEnd) buckets.upcoming.push(entry);
     }
   }
-  return summary;
+
+  buckets.overdue.sort(compareSummaryDue);
+  buckets.upcoming.sort(compareSummaryDue);
+  const maxItems = input.max_items_per_bucket;
+  const counts = {
+    overdue: buckets.overdue.length,
+    due_today: buckets.due_today.length,
+    upcoming: buckets.upcoming.length,
+    without_due_date: buckets.without_due_date.length,
+  };
+  const outputTruncated = {
+    overdue: counts.overdue > maxItems,
+    due_today: counts.due_today > maxItems,
+    upcoming: counts.upcoming > maxItems,
+    without_due_date: counts.without_due_date > maxItems,
+  };
+  return {
+    today,
+    upcoming_end: upcomingEnd,
+    counts,
+    overdue: buckets.overdue.slice(0, maxItems),
+    due_today: buckets.due_today.slice(0, maxItems),
+    upcoming: buckets.upcoming.slice(0, maxItems),
+    without_due_date: buckets.without_due_date.slice(0, maxItems),
+    truncated: {
+      list_scan: listScanTruncated,
+      task_scan: taskScanTruncated,
+      output_buckets: outputTruncated,
+    },
+  };
 }
 
-async function collectTaskLists(accessToken: string): Promise<GraphTodoTaskList[]> {
+async function collectTaskLists(accessToken: string): Promise<BoundedCollection<GraphTodoTaskList>> {
   const output: GraphTodoTaskList[] = [];
   let url: string | undefined = "/me/todo/lists?$top=100";
   for (let page = 0; url && page < 5; page += 1) {
-    const payload: ListResponse<GraphTodoTaskList> = await graphJson<ListResponse<GraphTodoTaskList>>(accessToken, url);
+    const payload = await graphJson<ListResponse<GraphTodoTaskList>>(accessToken, url);
     output.push(...payload.value);
     url = payload["@odata.nextLink"];
   }
-  return output;
+  return { items: output, truncated: Boolean(url) };
 }
 
-async function collectTasks(accessToken: string, listId: string, maxTasks: number): Promise<GraphTodoTask[]> {
+async function collectTasks(accessToken: string, listId: string, maxTasks: number): Promise<BoundedCollection<GraphTodoTask>> {
   const output: GraphTodoTask[] = [];
   let url: string | undefined = `/me/todo/lists/${segment(listId)}/tasks?$top=${Math.min(100, maxTasks)}`;
   for (let page = 0; url && page < 5 && output.length < maxTasks; page += 1) {
-    const payload: ListResponse<GraphTodoTask> = await graphJson<ListResponse<GraphTodoTask>>(accessToken, url);
+    const payload = await graphJson<ListResponse<GraphTodoTask>>(accessToken, url);
     output.push(...payload.value);
     url = payload["@odata.nextLink"];
   }
-  return output.slice(0, maxTasks);
+  const exceededItemCap = output.length > maxTasks;
+  return { items: output.slice(0, maxTasks), truncated: Boolean(url) || exceededItemCap };
+}
+
+function compactTask(task: GraphTodoTask): Record<string, unknown> {
+  return removeUndefined({
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    importance: task.importance,
+    dueDateTime: task.dueDateTime,
+    startDateTime: task.startDateTime,
+    reminderDateTime: task.reminderDateTime,
+    isReminderOn: task.isReminderOn,
+    categories: task.categories,
+    completedDateTime: task.completedDateTime,
+    etag: task["@odata.etag"],
+  });
+}
+
+function taskMatchedFields(task: GraphTodoTask, needle: string): string[] {
+  const fields: string[] = [];
+  if ((task.title ?? "").toLocaleLowerCase().includes(needle)) fields.push("title");
+  if ((task.body?.content ?? "").toLocaleLowerCase().includes(needle)) fields.push("notes");
+  if ((task.categories ?? []).some((category) => category.toLocaleLowerCase().includes(needle))) fields.push("categories");
+  return fields;
+}
+
+function bodyExcerpt(body: string, needle: string): string | undefined {
+  if (!body) return undefined;
+  const normalized = body.replace(/\s+/g, " ").trim();
+  if (!normalized) return undefined;
+  const index = normalized.toLocaleLowerCase().indexOf(needle);
+  const start = Math.max(0, index < 0 ? 0 : index - Math.floor(SEARCH_BODY_EXCERPT_CHARS / 3));
+  const excerpt = normalized.slice(start, start + SEARCH_BODY_EXCERPT_CHARS);
+  return `${start > 0 ? "…" : ""}${excerpt}${start + SEARCH_BODY_EXCERPT_CHARS < normalized.length ? "…" : ""}`;
+}
+
+function compareSummaryDue(left: SummaryEntry, right: SummaryEntry): number {
+  return String(left.task.dueDateTime && (left.task.dueDateTime as { dateTime?: string }).dateTime || "")
+    .localeCompare(String(right.task.dueDateTime && (right.task.dueDateTime as { dateTime?: string }).dateTime || ""));
 }
 
 function toGraphTaskPatch(input: ParsedInput, creating: boolean): Record<string, unknown> {
