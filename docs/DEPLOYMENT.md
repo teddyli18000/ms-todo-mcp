@@ -1,52 +1,14 @@
 # Cloudflare deployment
 
-This is the production path for the public `ms-todo-mcp` Worker. Do not put Microsoft secrets or user tokens in Git.
+This is the production path for the public `ms-todo-mcp` Worker. The repository is designed to deploy from GitHub through Cloudflare Workers Builds; no local machine is required for the normal production workflow.
 
-## 0. Local preflight
+Never put Microsoft client secrets, Cloudflare API tokens, access tokens, or refresh tokens in Git.
 
-Use Node.js 22 or newer and the committed lockfile:
-
-```bash
-npm ci
-npm run check
-npx wrangler whoami
-```
-
-If Wrangler is not authenticated, run:
-
-```bash
-npx wrangler login
-```
-
-`npm run check` must pass before deployment. `npm run deploy` also runs a predeploy guard that refuses to deploy while the placeholder KV namespace id is still present.
-
-## 1. Create the Cloudflare OAuth KV namespace
-
-The Cloudflare OAuth Provider library needs the `OAUTH_KV` binding:
-
-```bash
-npx wrangler kv namespace create OAUTH_KV
-```
-
-Copy the returned namespace id into `wrangler.jsonc`, replacing exactly:
-
-```text
-00000000000000000000000000000000
-```
-
-Then rerun:
-
-```bash
-npm run check
-```
-
-The KV namespace id is configuration, not a Microsoft credential. Do not put Cloudflare API tokens in the repository.
-
-## 2. Create the Microsoft Entra application
+## 1. Microsoft Entra application
 
 Create an app registration in Microsoft Entra ID.
 
-Recommended supported account type:
+Supported account type:
 
 > Accounts in any organizational directory and personal Microsoft accounts
 
@@ -56,85 +18,118 @@ Under **Microsoft Graph -> Delegated permissions**, add:
 Tasks.ReadWrite
 ```
 
-Create a client secret and copy both values while they are visible:
+The manifest should use access-token version 2 for this audience. Create a client secret and keep these values:
 
 - Application (client) ID -> `MICROSOFT_CLIENT_ID`
-- client secret value -> `MICROSOFT_CLIENT_SECRET`
+- client secret **Value** -> `MICROSOFT_CLIENT_SECRET`
 
-The connector itself requests `openid profile offline_access Tasks.ReadWrite`. It does not request Mail, Files, Calendar, Contacts, Directory, or admin scopes.
+The secret ID is not the client secret value.
 
-If you already know the final Worker hostname, add this as a **Web** redirect URI now:
-
-```text
-https://<worker-host>/oauth/microsoft/callback
-```
-
-If you do not know the hostname yet, add the redirect URI after the first deployment in step 4.
-
-## 3. Store the Microsoft values as Cloudflare Worker secrets
-
-From the repository root:
-
-```bash
-npx wrangler secret put MICROSOFT_CLIENT_ID
-npx wrangler secret put MICROSOFT_CLIENT_SECRET
-```
-
-Enter each value at Wrangler's prompt. Do not pass the client secret on the command line and do not add either value to `.env` files that might be committed.
-
-Current Wrangler versions deploy a new Worker version when `secret put` succeeds. That is expected; the OAuth flow is not ready until the callback URI is configured and the final deployment has completed.
-
-## 4. Deploy the Worker
-
-```bash
-npm run deploy
-```
-
-Record the stable Worker URL printed by Wrangler, for example:
+The connector requests only:
 
 ```text
-https://ms-todo-mcp.<your-workers-subdomain>.workers.dev
+openid profile offline_access Tasks.ReadWrite
 ```
 
-Check the health endpoint:
+It does not request Mail, Files, Calendar, Contacts, Directory, or admin scopes.
 
-```bash
-curl https://<worker-host>/health
+## 2. Cloudflare project and KV
+
+Connect this GitHub repository to a Cloudflare Worker project. The deploy command is:
+
+```text
+npx wrangler deploy
 ```
 
-Expected response:
+`wrangler.jsonc` defines the Worker, Durable Objects, migrations, and `OAUTH_KV` binding. This repository's production branch contains the owner's public KV namespace ID. A fork or independent deployment must create its own KV namespace and replace that ID before deploying. A KV namespace ID is configuration, not a credential.
+
+Do not copy another account's KV namespace ID and do not commit Cloudflare API tokens.
+
+## 3. Runtime variables and secrets
+
+In the **Worker's runtime settings**, add:
+
+```text
+MICROSOFT_CLIENT_ID
+MICROSOFT_CLIENT_SECRET
+```
+
+`MICROSOFT_CLIENT_SECRET` must be a runtime Secret. The client ID is public and may be a runtime variable or Secret.
+
+**Do not put these only in Workers Builds -> Build variables and secrets.** Build-time values are not automatically available to the running Worker. The connector validates its runtime Microsoft configuration and reports an unhealthy status when either value is missing or invalid.
+
+After saving runtime bindings, deploy the new Worker version.
+
+## 4. Verify the deployment
+
+The production URL is of the form:
+
+```text
+https://<worker-host>
+```
+
+Open:
+
+```text
+https://<worker-host>/health
+```
+
+A correctly configured runtime returns HTTP 200 with a response like:
 
 ```json
-{ "ok": true, "version": "0.1.0" }
+{
+  "ok": true,
+  "version": "0.1.0",
+  "microsoft_oauth_configured": true
+}
 ```
 
-## 5. Set the exact Microsoft callback URI
+A 503 response means the runtime Microsoft bindings are missing or malformed. Health validates local runtime configuration; it does not prove that the Entra secret, consent, or Microsoft Graph account access is valid until the OAuth flow is exercised.
 
-In the Entra app, add or verify this **Web** redirect URI:
+## 5. Microsoft callback URI
+
+In the Entra app, add this exact **Web** redirect URI:
 
 ```text
 https://<worker-host>/oauth/microsoft/callback
 ```
 
-The scheme, hostname and path must match exactly. No wildcard callback is required.
+The scheme, hostname, and path must match exactly. Keep implicit access-token and ID-token issuance disabled.
 
 ## 6. Connect ChatGPT
 
-Add a custom Remote MCP server in ChatGPT using:
+Add the Remote MCP server using:
 
 ```text
 https://<worker-host>/mcp
 ```
 
-Complete the connector OAuth flow and then sign in to the Microsoft account whose To Do data should be managed. Consent should show the delegated To Do permission, not mail/files/calendar permissions.
+Complete connector OAuth, then sign in to the Microsoft account whose To Do data should be managed. Consent should show the delegated To Do permission, not mail/files/calendar permissions.
 
-A safe first smoke test is read-only:
+A safe production smoke test is:
 
-1. call the connector capabilities tool;
+1. read connector capabilities;
 2. list task lists;
-3. list tasks from one existing list.
+3. read one existing task;
+4. create or update a real task you actually want;
+5. verify notes/date/reminder changes in Microsoft To Do;
+6. complete and reopen a suitable task to verify both state transitions.
 
-After reads work, create or update a real task you actually want. The connector intentionally has no cleanup/delete tool, so do not create disposable test items unless you are willing to remove them manually in Microsoft To Do.
+The connector intentionally has no cleanup/delete tool, so do not create disposable test items unless you are willing to remove them manually in Microsoft To Do.
+
+## Optional CLI path for independent self-hosting
+
+A fork can also be deployed with Wrangler from a trusted environment. Use Node.js 22 or newer and the committed lockfile:
+
+```bash
+npm ci
+npm run check
+npx wrangler whoami
+```
+
+Create your own KV namespace, replace the `OAUTH_KV` ID in `wrangler.jsonc`, set the two Microsoft runtime secrets with Wrangler, and run `npm run deploy`. The predeploy guard rejects the original all-zero placeholder if one is introduced.
+
+The GitHub/Cloudflare path above remains the production workflow for this repository.
 
 ## Expected security boundary
 
@@ -144,14 +139,15 @@ After reads work, create or update a real task you actually want. The connector 
 - PKCE + OIDC nonce + browser-bound one-time OAuth state;
 - Microsoft ID-token signature/audience/issuer/time validation;
 - per-user Durable Object token storage with refresh-generation protection;
-- bounded pagination/batches/request timeouts;
-- attachment download/upload bounded to 25 MiB, with Microsoft Graph upload-session destinations validated before upload.
+- bounded pagination/batches/request timeouts and compact cross-list discovery output;
+- attachment download/upload bounded to 25 MiB, with Microsoft Graph upload-session destinations validated before upload;
+- automatic Cloudflare invocation logs disabled by Worker configuration.
 
 ## Troubleshooting
 
+- Microsoft authorization URL contains `client_id=undefined`: runtime `MICROSOFT_CLIENT_ID` is missing; check Worker **runtime** variables, not Build variables.
 - `AADSTS50011`: the Entra Web redirect URI does not exactly match `https://<worker-host>/oauth/microsoft/callback`.
 - missing refresh token: reconnect; the connector includes `offline_access` by default.
 - `401/403` from Graph: reconnect and verify delegated `Tasks.ReadWrite` is granted to the signed-in Microsoft account.
-- deploy guard says `replace the placeholder OAUTH_KV id`: create the KV namespace and update `wrangler.jsonc` before retrying.
-- `npm ci` peer-resolution error: make sure the repository `.npmrc` and committed `package-lock.json` are both present; do not regenerate the lockfile with a different peer-resolution mode.
+- `/health` returns 503: one of the Microsoft runtime bindings is absent or invalid.
 - custom task lists missing on a personal account: capture a minimal reproducible Graph response before adding any local registry workaround. The project intentionally avoids a shadow database unless the limitation is reproduced.
