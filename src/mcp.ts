@@ -32,6 +32,6 @@ function formatZod(error: ZodError): string {
 function sanitizeLogText(value: string): string {
   return value
     .replace(/Bearer\s+[^\s]+/gi, "Bearer [REDACTED]")
-    .replace(/(?:access_token|refresh_token|client_secret)\s*[=:]\s*[^\s,;]+/gi, "$1=[REDACTED]")
+    .replace(/(access_token|refresh_token|client_secret)\s*[=:]\s*[^\s,;]+/gi, "$1=[REDACTED]")
     .slice(0, 1000);
 }
