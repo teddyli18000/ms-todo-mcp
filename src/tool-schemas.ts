@@ -96,6 +96,7 @@ export const schemas = {
     days_ahead: z.number().int().min(1).max(90).default(7),
     include_completed: z.boolean().default(false),
     max_tasks_per_list: z.number().int().min(1).max(200).default(100),
+    max_items_per_bucket: z.number().int().min(1).max(100).default(25).describe("Maximum returned items in each summary bucket; total counts are still reported."),
   }),
   list_checklist_items: z.strictObject({ list_id: id, task_id: id }),
   list_linked_resources: z.strictObject({ list_id: id, task_id: id }),
