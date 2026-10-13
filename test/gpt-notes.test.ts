@@ -14,6 +14,11 @@ describe("GPT collaboration note ownership", () => {
     expect(merged).toBe(`keep this\n\n\n${GPT_NOTE_MARKER}\n状态：进行中`);
   });
 
+  it("keeps an agent-provided separator when the user prefix is unchanged", () => {
+    const proposed = `keep this\n\n\n${GPT_NOTE_MARKER}\n状态：进行中`;
+    expect(mergeProtectedTaskNote("keep this", proposed)).toBe(proposed);
+  });
+
   it("leaves ordinary notes unchanged by the collaboration protocol", () => {
     expect(mergeProtectedTaskNote("old ordinary note", "new ordinary note")).toBe("new ordinary note");
   });
