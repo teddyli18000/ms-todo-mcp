@@ -18,10 +18,12 @@ The connector exposes 24 bounded model-facing tools:
 - checklist/subtask items: read, create, rename, check and uncheck;
 - linked resources: read, create and update;
 - attachments: list metadata and upload one ChatGPT-authorized file at a time, up to 25 MiB;
-- bounded cross-list today/overdue/upcoming summaries;
+- bounded cross-list due-today/overdue/upcoming summaries with compact output and total counts;
 - bounded batch create, update and complete operations.
 
 There is deliberately **no** task/list/checklist/resource/attachment deletion and no arbitrary Graph HTTP tool. The Microsoft permission itself is read/write, but deletion is not part of this connector's model-facing capability surface or Graph request paths.
+
+Microsoft To Do's **My Day** smart view is not exposed by the public task-list surface used here. Due-today summaries are not presented as My Day.
 
 ## GPT collaboration model
 
@@ -49,14 +51,18 @@ The Microsoft authorization-code flow also uses PKCE, a per-login OIDC nonce, br
 
 ## Deployment
 
-See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the exact sequence. At a high level:
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the exact sequence. This repository's production path is GitHub -> Cloudflare Workers Builds; no local checkout is required for normal deployment.
 
-1. Create a Microsoft Entra app that supports personal Microsoft accounts and work/school accounts, add delegated Microsoft Graph `Tasks.ReadWrite`, and create a client secret.
-2. Create Cloudflare `OAUTH_KV` and replace the placeholder namespace id in `wrangler.jsonc`.
-3. Store `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET` with `wrangler secret put`.
-4. Run `npm ci` and `npm run check`, then deploy the Worker.
-5. Add the exact deployed callback `https://<worker-host>/oauth/microsoft/callback` to the Entra app.
+At a high level:
+
+1. Create a Microsoft Entra app for work/school and personal Microsoft accounts with delegated `Tasks.ReadWrite`.
+2. Connect the GitHub repository to a Cloudflare Worker and bind `OAUTH_KV` plus the three Durable Objects defined in `wrangler.jsonc`.
+3. Put `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET` in the Worker's **runtime** Variables and Secrets, not only in Build variables.
+4. Deploy `main` with `npx wrangler deploy` through Workers Builds.
+5. Verify `/health`, then add the exact `https://<worker-host>/oauth/microsoft/callback` Web redirect URI to Entra.
 6. Connect ChatGPT to `https://<worker-host>/mcp` and complete Microsoft sign-in.
+
+Forks and independent deployments must create their own KV namespace and Microsoft app. The KV namespace ID is public configuration; OAuth secrets and user tokens remain deployment-only.
 
 ## Development
 
@@ -67,7 +73,7 @@ npm run build-check
 npm run check
 ```
 
-The committed lockfile plus the project `.npmrc` make installs reproducible with `npm ci`. CI runs locked install, type-checks, Vitest, and a Wrangler dry-run bundle on every pull request and on pushes to `main`.
+The committed lockfile plus the project `.npmrc` make installs reproducible with `npm ci`. CI uses read-only repository permissions, pinned GitHub Action revisions, locked install, dependency audits, type-checking, Vitest, and a Wrangler dry-run bundle on every pull request and push to `main`.
 
 ## Design references
 
